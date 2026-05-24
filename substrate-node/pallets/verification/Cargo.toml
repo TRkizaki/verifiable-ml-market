@@ -1,0 +1,25 @@
+[package]
+name = "pallet-verification"
+version = "0.1.0"
+edition = "2021"
+description = "Commit-reveal verification pallet for ML predictions"
+license = "MIT"
+
+[dependencies]
+codec = { package = "parity-scale-codec", version = "3.6", default-features = false, features = ["derive"] }
+scale-info = { version = "2.11", default-features = false, features = ["derive"] }
+frame-support = { version = "36.0", default-features = false }
+frame-system = { version = "36.0", default-features = false }
+sp-runtime = { version = "39.0", default-features = false }
+sp-core = { version = "34.0", default-features = false }
+
+[features]
+default = ["std"]
+std = [
+    "codec/std",
+    "scale-info/std",
+    "frame-support/std",
+    "frame-system/std",
+    "sp-runtime/std",
+    "sp-core/std",
+]

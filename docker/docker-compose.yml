@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  rust-pipeline:
+    build:
+      context: ../rust-pipeline
+      dockerfile: ../docker/Dockerfile.rust
+    ports:
+      - "3000:3000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3000
+      - RUST_LOG=info
+
+  python-models:
+    build:
+      context: ../python-models
+      dockerfile: ../docker/Dockerfile.python
+    ports:
+      - "8000:8000"
+    depends_on:
+      - rust-pipeline
+    environment:
+      - RUST_PIPELINE_URL=http://rust-pipeline:3000
+
+  substrate-node:
+    build:
+      context: ../substrate-node
+      dockerfile: ../docker/Dockerfile.substrate
+    ports:
+      - "9944:9944"  # WebSocket RPC
+      - "9933:9933"  # HTTP RPC
+      - "30333:30333" # P2P
+    command: >
+      --dev
+      --ws-external
+      --rpc-external
+      --rpc-cors=all
