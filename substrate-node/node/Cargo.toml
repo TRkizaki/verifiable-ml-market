@@ -1,0 +1,48 @@
+[package]
+name = "vml-node"
+version = "0.1.0"
+edition = "2021"
+description = "Substrate node for the Verifiable ML Prediction Market"
+license = "MIT"
+build = "build.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+futures = "0.3"
+serde_json = "1.0"
+jsonrpsee = { version = "0.24", features = ["server"] }
+
+sc-cli = { workspace = true }
+sc-client-api = { workspace = true }
+sc-consensus = { workspace = true }
+sc-consensus-aura = { workspace = true }
+sc-consensus-grandpa = { workspace = true }
+sc-executor = { workspace = true }
+sc-network = { workspace = true }
+sc-offchain = { workspace = true }
+sc-service = { workspace = true }
+sc-telemetry = { workspace = true }
+sc-transaction-pool = { workspace = true }
+sc-transaction-pool-api = { workspace = true }
+sc-basic-authorship = { workspace = true }
+sc-rpc-api = { workspace = true }
+
+sp-api = { workspace = true, features = ["std"] }
+sp-block-builder = { workspace = true, features = ["std"] }
+sp-blockchain = { workspace = true }
+sp-consensus-aura = { workspace = true, features = ["std"] }
+sp-consensus-grandpa = { workspace = true, features = ["std"] }
+sp-core = { workspace = true, features = ["std"] }
+sp-inherents = { workspace = true, features = ["std"] }
+sp-io = { workspace = true, features = ["std"] }
+sp-keyring = { workspace = true }
+sp-runtime = { workspace = true, features = ["std"] }
+sp-timestamp = { workspace = true }
+
+substrate-frame-rpc-system = { workspace = true }
+pallet-transaction-payment-rpc = { workspace = true }
+
+vml-runtime = { path = "../runtime", features = ["std"] }
+
+[build-dependencies]
+substrate-build-script-utils = { workspace = true }

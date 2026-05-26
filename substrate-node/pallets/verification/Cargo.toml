@@ -6,12 +6,15 @@ description = "Commit-reveal verification pallet for ML predictions"
 license = "MIT"
 
 [dependencies]
-codec = { package = "parity-scale-codec", version = "3.6", default-features = false, features = ["derive"] }
-scale-info = { version = "2.11", default-features = false, features = ["derive"] }
-frame-support = { version = "36.0", default-features = false }
-frame-system = { version = "36.0", default-features = false }
-sp-runtime = { version = "39.0", default-features = false }
-sp-core = { version = "34.0", default-features = false }
+codec = { workspace = true }
+scale-info = { workspace = true }
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+sp-runtime = { workspace = true }
+sp-core = { workspace = true }
+
+[dev-dependencies]
+sp-io = { workspace = true }
 
 [features]
 default = ["std"]
@@ -22,4 +25,14 @@ std = [
     "frame-system/std",
     "sp-runtime/std",
     "sp-core/std",
+]
+runtime-benchmarks = [
+    "frame-support/runtime-benchmarks",
+    "frame-system/runtime-benchmarks",
+    "sp-runtime/runtime-benchmarks",
+]
+try-runtime = [
+    "frame-support/try-runtime",
+    "frame-system/try-runtime",
+    "sp-runtime/try-runtime",
 ]

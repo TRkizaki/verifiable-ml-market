@@ -5,19 +5,21 @@
 //! ## Flow
 //! 1. Model operator calls `submit_commitment(prediction_id, commitment_hash)`
 //! 2. After ground truth is known, operator calls `reveal_prediction(prediction_id, prediction, salt, model_hash, input_hash)`
-//! 3. Pallet verifies: Hash(prediction || salt || model_hash || input_hash) == stored commitment
+//! 3. Pallet verifies: Blake2(prediction || salt || model_hash || input_hash) == stored commitment
 //! 4. Anyone can call `submit_ground_truth(prediction_id, outcome)` (oracle role)
 
 #![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
 
 pub use pallet::*;
 
 #[frame_support::pallet]
 pub mod pallet {
+    use alloc::vec::Vec;
     use frame_support::pallet_prelude::*;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::Hash;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
@@ -25,10 +27,8 @@ pub mod pallet {
     #[pallet::config]
     pub trait Config: frame_system::Config {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-        type Hashing: Hash<Output = H256>;
     }
 
-    /// A stored commitment
     #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen)]
     #[scale_info(skip_type_params(T))]
     pub struct Commitment<T: Config> {
@@ -38,22 +38,20 @@ pub mod pallet {
         pub revealed: bool,
     }
 
-    /// A revealed prediction
     #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen)]
     #[scale_info(skip_type_params(T))]
     pub struct RevealedPrediction<T: Config> {
         pub submitter: T::AccountId,
-        pub prediction: i128,   // fixed-point: actual * 10^6
+        pub prediction: i128,
         pub model_hash: H256,
         pub input_hash: H256,
         pub block_number: BlockNumberFor<T>,
     }
 
-    /// Ground truth for a prediction
     #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen)]
     #[scale_info(skip_type_params(T))]
     pub struct GroundTruth<T: Config> {
-        pub outcome: i128,      // fixed-point: actual * 10^6
+        pub outcome: i128,
         pub submitter: T::AccountId,
         pub block_number: BlockNumberFor<T>,
     }
@@ -153,9 +151,13 @@ pub mod pallet {
             ensure!(commitment.submitter == who, Error::<T>::NotCommitmentOwner);
             ensure!(!commitment.revealed, Error::<T>::AlreadyRevealed);
 
-            // Verify: Hash(prediction || salt || model_hash || input_hash) == commitment_hash
-            let preimage = (prediction, salt, model_hash, input_hash);
-            let computed_hash = T::Hashing::hash_of(&preimage);
+            // Verify: Blake2_256(prediction || salt || model_hash || input_hash) == commitment_hash
+            let mut preimage = Vec::new();
+            preimage.extend_from_slice(&prediction.to_le_bytes());
+            preimage.extend_from_slice(salt.as_bytes());
+            preimage.extend_from_slice(model_hash.as_bytes());
+            preimage.extend_from_slice(input_hash.as_bytes());
+            let computed_hash = H256::from(sp_core::hashing::blake2_256(&preimage));
 
             if computed_hash != commitment.commitment_hash {
                 Self::deposit_event(Event::VerificationFailed {
