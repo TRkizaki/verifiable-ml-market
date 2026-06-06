@@ -15,6 +15,11 @@ extern crate alloc;
 
 pub use pallet::*;
 
+#[cfg(test)]
+mod mock;
+#[cfg(test)]
+mod tests;
+
 #[frame_support::pallet]
 pub mod pallet {
     use frame_support::pallet_prelude::*;
@@ -59,7 +64,7 @@ pub mod pallet {
         pub settled: bool,
     }
 
-    #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, PartialEq)]
+    #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, PartialEq, Debug)]
     pub enum MarketStatus {
         Open,
         AwaitingReveal,
