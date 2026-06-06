@@ -1,7 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::core::types::TimeSeriesData;
+use serde::{Deserialize, Serialize};
 
-/// Configuration for on-chain data ingestion
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnChainConfig {
     pub rpc_url: String,
@@ -21,23 +20,25 @@ impl Default for OnChainConfig {
     }
 }
 
-/// On-chain data source fetcher.
-/// In production, this will use subxt to query Substrate RPC.
-/// For now, provides the interface and CSV fallback for development.
 pub struct OnChainSource {
     config: OnChainConfig,
+    #[cfg(feature = "substrate")]
+    client: Option<crate::substrate_client::client::SubstrateClient>,
 }
 
 impl OnChainSource {
     pub fn new(config: OnChainConfig) -> Self {
-        OnChainSource { config }
+        OnChainSource {
+            config,
+            #[cfg(feature = "substrate")]
+            client: None,
+        }
     }
 
     pub fn config(&self) -> &OnChainConfig {
         &self.config
     }
 
-    /// Load data from CSV file (development fallback)
     pub fn load_from_csv(&self, path: &str) -> anyhow::Result<Vec<TimeSeriesData>> {
         let mut reader = csv::Reader::from_path(path)?;
         let mut data = Vec::new();
@@ -50,10 +51,44 @@ impl OnChainSource {
         data.sort_by_key(|d| d.timestamp);
         Ok(data)
     }
+}
 
-    // TODO: Implement subxt-based on-chain data fetching
-    // #[cfg(feature = "substrate")]
-    // pub async fn fetch_blocks(&self, from: u64, to: u64) -> anyhow::Result<Vec<TimeSeriesData>> {
-    //     ...
-    // }
+#[cfg(feature = "substrate")]
+impl OnChainSource {
+    pub async fn connect(&mut self) -> anyhow::Result<()> {
+        let client =
+            crate::substrate_client::client::SubstrateClient::connect(&self.config.rpc_url)
+                .await?;
+        self.client = Some(client);
+        Ok(())
+    }
+
+    pub async fn fetch_market_state(
+        &self,
+        market_id: subxt::utils::H256,
+    ) -> anyhow::Result<Option<MarketStateInfo>> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Not connected to substrate node"))?;
+
+        let market = client.query_market(market_id).await?;
+        Ok(market.map(|m| MarketStateInfo {
+            status: format!("{:?}", m.status),
+            total_stake: m.total_stake,
+            participant_count: m.participant_count,
+            created_block: m.created_block,
+            prediction_id: format!("0x{}", hex::encode(m.prediction_id.0)),
+        }))
+    }
+}
+
+#[cfg(feature = "substrate")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketStateInfo {
+    pub status: String,
+    pub total_stake: u128,
+    pub participant_count: u32,
+    pub created_block: u64,
+    pub prediction_id: String,
 }

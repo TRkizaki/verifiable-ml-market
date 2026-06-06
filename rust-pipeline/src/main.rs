@@ -26,6 +26,13 @@ async fn main() -> anyhow::Result<()> {
     println!("  POST /api/provenance/verify   - Verify commitment");
     println!("  POST /api/evaluate            - Evaluate predictions");
 
+    #[cfg(feature = "ingestion")]
+    {
+        println!();
+        println!("Ingestion endpoints:");
+        println!("  POST /api/ingest/prices         - Fetch price history & generate features");
+    }
+
     #[cfg(feature = "substrate")]
     {
         println!();

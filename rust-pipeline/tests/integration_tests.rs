@@ -1,4 +1,5 @@
 use vml_pipeline::core::*;
+use vml_pipeline::ingestion::offchain_source::OffChainConfig;
 use vml_pipeline::provenance::*;
 
 #[test]
@@ -82,6 +83,55 @@ fn test_merkle_tree_batch_provenance() {
     assert!(tree.verify_leaf(0, "pred_001:112.0"));
     assert!(tree.verify_leaf(3, "pred_004:99.8"));
     assert!(!tree.verify_leaf(0, "pred_001:999.0"));
+}
+
+#[test]
+fn test_offchain_ingestion_pipeline() {
+    let config = OffChainConfig::default();
+    assert_eq!(config.api_url, "https://api.coingecko.com/api/v3");
+
+    let data: Vec<TimeSeriesData> = (0..10)
+        .map(|i| TimeSeriesData {
+            timestamp: 1700000000 + i * 3600,
+            asset_id: "BITCOIN-USD".to_string(),
+            price: 40000.0 + (i as f64) * 100.0,
+            volume: 1_000_000.0 + (i as f64) * 50000.0,
+            liquidity: 0.0,
+            tvl: None,
+            borrow_rate: None,
+            utilisation: None,
+        })
+        .collect();
+
+    let engine = FeatureEngine::default();
+    let timestamps: Vec<u64> = data.iter().map(|d| d.timestamp).collect();
+    let prices: Vec<f64> = data.iter().map(|d| d.price).collect();
+    let volumes: Vec<f64> = data.iter().map(|d| d.volume).collect();
+    let liquidities: Vec<f64> = data.iter().map(|d| d.liquidity).collect();
+    let tvls: Vec<Option<f64>> = data.iter().map(|d| d.tvl).collect();
+    let borrow_rates: Vec<Option<f64>> = data.iter().map(|d| d.borrow_rate).collect();
+    let utilisations: Vec<Option<f64>> = data.iter().map(|d| d.utilisation).collect();
+
+    let features = engine.generate_features(
+        "BITCOIN-USD",
+        &timestamps,
+        &prices,
+        &volumes,
+        &liquidities,
+        &tvls,
+        &borrow_rates,
+        &utilisations,
+        AssetClass::DeFiToken,
+    );
+
+    assert_eq!(features.len(), 10);
+    assert_eq!(features[0].asset_id, "BITCOIN-USD");
+    assert!((features[0].price - 40000.0).abs() < 0.01);
+    assert!(features[5].price_rolling_mean.is_some());
+    assert!(features[5].momentum_1.is_some());
+    assert!(features[5].realised_volatility.is_some());
+    assert!(features[9].target.is_none());
+    assert!(features[4].target.is_some());
 }
 
 #[test]

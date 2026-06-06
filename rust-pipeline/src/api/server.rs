@@ -52,6 +52,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Evaluation
         .route("/api/evaluate", post(evaluate_predictions));
 
+    #[cfg(feature = "ingestion")]
+    let router = router
+        .route("/api/ingest/prices", post(ingest_prices));
+
     #[cfg(feature = "substrate")]
     let router = router
         .route("/api/chain/register-model", post(chain_register_model))
@@ -341,6 +345,60 @@ async fn evaluate_predictions(
 ) -> Json<EvaluationMetrics> {
     let metrics = EvaluationMetrics::compute(&request.predictions, &request.actual);
     Json(metrics)
+}
+
+// --- Ingestion endpoint (ingestion feature) ---
+
+#[cfg(feature = "ingestion")]
+#[derive(Debug, Deserialize)]
+struct IngestPricesRequest {
+    coin_id: String,
+    vs_currency: Option<String>,
+    days: Option<u32>,
+}
+
+#[cfg(feature = "ingestion")]
+async fn ingest_prices(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<IngestPricesRequest>,
+) -> Json<Vec<crate::core::types::FeatureVector>> {
+    use crate::ingestion::offchain_source::{OffChainConfig, OffChainSource};
+    use crate::core::types::AssetClass;
+
+    let source = OffChainSource::new(OffChainConfig::default());
+    let vs = request.vs_currency.as_deref().unwrap_or("usd");
+    let days = request.days.unwrap_or(7);
+
+    let data = source
+        .fetch_price_history(&request.coin_id, vs, days)
+        .await
+        .unwrap_or_default();
+
+    if data.is_empty() {
+        return Json(vec![]);
+    }
+
+    let timestamps: Vec<u64> = data.iter().map(|d| d.timestamp).collect();
+    let prices: Vec<f64> = data.iter().map(|d| d.price).collect();
+    let volumes: Vec<f64> = data.iter().map(|d| d.volume).collect();
+    let liquidities: Vec<f64> = data.iter().map(|d| d.liquidity).collect();
+    let tvls: Vec<Option<f64>> = data.iter().map(|d| d.tvl).collect();
+    let borrow_rates: Vec<Option<f64>> = data.iter().map(|d| d.borrow_rate).collect();
+    let utilisations: Vec<Option<f64>> = data.iter().map(|d| d.utilisation).collect();
+
+    let features = state.feature_engine.generate_features(
+        &data[0].asset_id,
+        &timestamps,
+        &prices,
+        &volumes,
+        &liquidities,
+        &tvls,
+        &borrow_rates,
+        &utilisations,
+        AssetClass::DeFiToken,
+    );
+
+    Json(features)
 }
 
 // --- Chain endpoints (substrate feature) ---

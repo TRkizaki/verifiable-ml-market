@@ -20,6 +20,7 @@ default = ["http"]
 http = ["axum", "tokio", "tower", "tower-http"]
 python = ["pyo3"]
 substrate = ["subxt", "subxt-signer", "blake2", "tokio"]
+ingestion = ["reqwest", "tokio"]
 
 [dependencies]
 # Core
@@ -49,6 +50,9 @@ pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 subxt = { version = "0.38", optional = true }
 subxt-signer = { version = "0.38", features = ["sr25519"], optional = true }
 blake2 = { version = "0.10", optional = true }
+
+# HTTP client for data ingestion (optional)
+reqwest = { version = "0.12", features = ["json"], optional = true }
 
 # Logging
 tracing = "0.1"
