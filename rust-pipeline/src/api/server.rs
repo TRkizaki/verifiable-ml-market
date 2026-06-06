@@ -15,6 +15,8 @@ use crate::provenance::*;
 pub struct AppState {
     pub feature_engine: FeatureEngine,
     pub ensemble_optimiser: EnsembleOptimiser,
+    #[cfg(feature = "substrate")]
+    pub chain_client: Option<crate::substrate_client::client::SubstrateClient>,
 }
 
 impl Default for AppState {
@@ -22,6 +24,8 @@ impl Default for AppState {
         AppState {
             feature_engine: FeatureEngine::default(),
             ensemble_optimiser: EnsembleOptimiser::default(),
+            #[cfg(feature = "substrate")]
+            chain_client: None,
         }
     }
 }
@@ -32,7 +36,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    let router = Router::new()
         .route("/health", get(health_check))
         // Feature engineering
         .route("/api/features/rolling", post(compute_rolling_features))
@@ -46,13 +50,40 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/provenance/commit", post(create_commitment))
         .route("/api/provenance/verify", post(verify_commitment))
         // Evaluation
-        .route("/api/evaluate", post(evaluate_predictions))
-        .layer(cors)
-        .with_state(state)
+        .route("/api/evaluate", post(evaluate_predictions));
+
+    #[cfg(feature = "substrate")]
+    let router = router
+        .route("/api/chain/register-model", post(chain_register_model))
+        .route("/api/chain/create-market", post(chain_create_market))
+        .route("/api/chain/submit-commitment", post(chain_submit_commitment))
+        .route("/api/chain/reveal", post(chain_reveal))
+        .route("/api/chain/ground-truth", post(chain_ground_truth))
+        .route("/api/chain/stake", post(chain_stake))
+        .route("/api/chain/settle", post(chain_settle))
+        .route("/api/chain/market/{id}", get(chain_query_market));
+
+    router.layer(cors).with_state(state)
 }
 
-pub async fn start_server(host: &str, port: u16) -> anyhow::Result<()> {
-    let state = Arc::new(AppState::default());
+pub async fn start_server(host: &str, port: u16, #[cfg(feature = "substrate")] substrate_url: Option<&str>) -> anyhow::Result<()> {
+    #[allow(unused_mut)]
+    let mut state = AppState::default();
+
+    #[cfg(feature = "substrate")]
+    if let Some(url) = substrate_url {
+        match crate::substrate_client::client::SubstrateClient::connect(url).await {
+            Ok(client) => {
+                info!("Connected to substrate node at {}", url);
+                state.chain_client = Some(client);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to connect to substrate node at {}: {}", url, e);
+            }
+        }
+    }
+
+    let state = Arc::new(state);
     let app = create_router(state);
 
     let addr = format!("{}:{}", host, port);
@@ -311,3 +342,209 @@ async fn evaluate_predictions(
     let metrics = EvaluationMetrics::compute(&request.predictions, &request.actual);
     Json(metrics)
 }
+
+// --- Chain endpoints (substrate feature) ---
+
+#[cfg(feature = "substrate")]
+mod chain {
+    use super::*;
+    use axum::extract::Path;
+    use axum::http::StatusCode;
+    use crate::substrate_client::client::{format_h256, parse_h256};
+
+    #[derive(Debug, Serialize)]
+    pub struct TxResponse {
+        pub tx_hash: String,
+    }
+
+    #[derive(Debug, Serialize)]
+    pub struct ErrorResponse {
+        pub error: String,
+    }
+
+    type ChainResult<T> = Result<Json<T>, (StatusCode, Json<ErrorResponse>)>;
+
+    fn chain_err(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorResponse>) {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+    }
+
+    fn no_client() -> (StatusCode, Json<ErrorResponse>) {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse {
+            error: "Substrate node not connected".to_string(),
+        }))
+    }
+
+    fn get_client(state: &AppState) -> Result<&crate::substrate_client::client::SubstrateClient, (StatusCode, Json<ErrorResponse>)> {
+        state.chain_client.as_ref().ok_or_else(no_client)
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct RegisterModelRequest {
+        pub model_id: String,
+        pub model_hash: String,
+    }
+
+    pub async fn register_model(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<RegisterModelRequest>,
+    ) -> ChainResult<TxResponse> {
+        let client = get_client(&state)?;
+        let model_id = parse_h256(&req.model_id).map_err(chain_err)?;
+        let model_hash = parse_h256(&req.model_hash).map_err(chain_err)?;
+        let hash = client.register_model(model_id, model_hash).await.map_err(chain_err)?;
+        Ok(Json(TxResponse { tx_hash: format_h256(&hash) }))
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct CreateMarketRequest {
+        pub market_id: String,
+        pub prediction_id: String,
+    }
+
+    pub async fn create_market(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<CreateMarketRequest>,
+    ) -> ChainResult<TxResponse> {
+        let client = get_client(&state)?;
+        let market_id = parse_h256(&req.market_id).map_err(chain_err)?;
+        let prediction_id = parse_h256(&req.prediction_id).map_err(chain_err)?;
+        let hash = client.create_market(market_id, prediction_id).await.map_err(chain_err)?;
+        Ok(Json(TxResponse { tx_hash: format_h256(&hash) }))
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct SubmitCommitmentRequest {
+        pub prediction_id: String,
+        pub commitment_hash: String,
+    }
+
+    pub async fn submit_commitment(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<SubmitCommitmentRequest>,
+    ) -> ChainResult<TxResponse> {
+        let client = get_client(&state)?;
+        let prediction_id = parse_h256(&req.prediction_id).map_err(chain_err)?;
+        let commitment_hash = parse_h256(&req.commitment_hash).map_err(chain_err)?;
+        let hash = client.submit_commitment(prediction_id, commitment_hash).await.map_err(chain_err)?;
+        Ok(Json(TxResponse { tx_hash: format_h256(&hash) }))
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct RevealRequest {
+        pub prediction_id: String,
+        pub prediction: i128,
+        pub salt: String,
+        pub model_hash: String,
+        pub input_hash: String,
+    }
+
+    pub async fn reveal(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<RevealRequest>,
+    ) -> ChainResult<TxResponse> {
+        let client = get_client(&state)?;
+        let prediction_id = parse_h256(&req.prediction_id).map_err(chain_err)?;
+        let salt = parse_h256(&req.salt).map_err(chain_err)?;
+        let model_hash = parse_h256(&req.model_hash).map_err(chain_err)?;
+        let input_hash = parse_h256(&req.input_hash).map_err(chain_err)?;
+        let hash = client
+            .reveal_prediction(prediction_id, req.prediction, salt, model_hash, input_hash)
+            .await
+            .map_err(chain_err)?;
+        Ok(Json(TxResponse { tx_hash: format_h256(&hash) }))
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct GroundTruthRequest {
+        pub prediction_id: String,
+        pub outcome: i128,
+    }
+
+    pub async fn ground_truth(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<GroundTruthRequest>,
+    ) -> ChainResult<TxResponse> {
+        let client = get_client(&state)?;
+        let prediction_id = parse_h256(&req.prediction_id).map_err(chain_err)?;
+        let hash = client.submit_ground_truth(prediction_id, req.outcome).await.map_err(chain_err)?;
+        Ok(Json(TxResponse { tx_hash: format_h256(&hash) }))
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct StakeRequest {
+        pub market_id: String,
+        pub model_id: String,
+        pub prediction_id: String,
+        pub stake_amount: u128,
+    }
+
+    pub async fn stake(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<StakeRequest>,
+    ) -> ChainResult<TxResponse> {
+        let client = get_client(&state)?;
+        let market_id = parse_h256(&req.market_id).map_err(chain_err)?;
+        let model_id = parse_h256(&req.model_id).map_err(chain_err)?;
+        let prediction_id = parse_h256(&req.prediction_id).map_err(chain_err)?;
+        let hash = client
+            .stake_prediction(market_id, model_id, prediction_id, req.stake_amount)
+            .await
+            .map_err(chain_err)?;
+        Ok(Json(TxResponse { tx_hash: format_h256(&hash) }))
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct SettleRequest {
+        pub market_id: String,
+    }
+
+    pub async fn settle(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<SettleRequest>,
+    ) -> ChainResult<TxResponse> {
+        let client = get_client(&state)?;
+        let market_id = parse_h256(&req.market_id).map_err(chain_err)?;
+        let hash = client.settle_market(market_id).await.map_err(chain_err)?;
+        Ok(Json(TxResponse { tx_hash: format_h256(&hash) }))
+    }
+
+    #[derive(Debug, Serialize)]
+    pub struct MarketResponse {
+        pub status: String,
+        pub total_stake: u128,
+        pub participant_count: u32,
+        pub created_block: u64,
+        pub prediction_id: String,
+    }
+
+    pub async fn query_market(
+        State(state): State<Arc<AppState>>,
+        Path(id): Path<String>,
+    ) -> ChainResult<Option<MarketResponse>> {
+        let client = get_client(&state)?;
+        let market_id = parse_h256(&id).map_err(chain_err)?;
+        let market = client.query_market(market_id).await.map_err(chain_err)?;
+        Ok(Json(market.map(|m| {
+            let status = format!("{:?}", m.status);
+            MarketResponse {
+                status,
+                total_stake: m.total_stake,
+                participant_count: m.participant_count,
+                created_block: m.created_block,
+                prediction_id: format_h256(&m.prediction_id),
+            }
+        })))
+    }
+}
+
+#[cfg(feature = "substrate")]
+use chain::{
+    register_model as chain_register_model,
+    create_market as chain_create_market,
+    submit_commitment as chain_submit_commitment,
+    reveal as chain_reveal,
+    ground_truth as chain_ground_truth,
+    stake as chain_stake,
+    settle as chain_settle,
+    query_market as chain_query_market,
+};
