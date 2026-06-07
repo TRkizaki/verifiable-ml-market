@@ -121,12 +121,13 @@ pub mod client {
         }
 
         async fn submit<T: subxt::tx::Payload>(&self, tx: T) -> Result<H256> {
-            let hash = self
+            let progress = self
                 .api
                 .tx()
-                .sign_and_submit_default(&tx, &self.signer)
+                .sign_and_submit_then_watch_default(&tx, &self.signer)
                 .await?;
-            Ok(hash)
+            let in_block = progress.wait_for_finalized().await?;
+            Ok(in_block.block_hash())
         }
     }
 
